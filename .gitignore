@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+*$py.class
+config.json
+relaxing_music/Ocean_Waves_Relax.wav
+relaxing_music/Rain_Storm_Ambient.wav
