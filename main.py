@@ -211,6 +211,7 @@ class DynamicBackgroundWidget(QWidget):
         self.lbl_bg.setScaledContents(True)
 
         self.video_widget = QVideoWidget(self)
+        self.video_widget.setAspectRatioMode(Qt.IgnoreAspectRatio)
         self.media_player = QMediaPlayer(None, QMediaPlayer.VideoSurface)
         self.media_player.setVideoOutput(self.video_widget)
         self.media_player.mediaStatusChanged.connect(self._handle_video_loop)
@@ -241,7 +242,7 @@ class DynamicBackgroundWidget(QWidget):
 
         ext = os.path.splitext(file_path)[1].lower()
 
-        if ext in ['.png', '.jpg', '.jpeg', '.bmp']:
+        if ext in ['.png', '.jpg', '.jpeg', '.bmp', '.webp']:
             self.video_widget.hide()
             self.lbl_bg.show()
             self.current_pixmap = QPixmap(file_path)
@@ -313,6 +314,8 @@ class ParrotSuite(QMainWindow):
         self._apply_theme(self.config.get("theme", "Dark Cyberpunk"))
 
         self.last_triggered_min = None
+
+        self.temporary_alarms = []
 
         # Master Alarm Check Loop
         self.master_timer = QTimer(self)
@@ -707,9 +710,13 @@ class ParrotSuite(QMainWindow):
         if now_str == self.last_triggered_min:
             return
 
-        for alarm in self.config.get("alarms", []):
+        all_alarms = self.config.get("alarms", []) + self.temporary_alarms
+        for alarm in all_alarms:
             if alarm["time"] == now_str and datetime.now().second == 0:
                 self.last_triggered_min = now_str
+                # If this was a temporary snoozed alarm, remove it so it doesn't ring tomorrow
+                if alarm in self.temporary_alarms:
+                    self.temporary_alarms.remove(alarm)
                 self._trigger_alarm(alarm)
 
     def _trigger_alarm(self, alarm):
@@ -740,12 +747,12 @@ class ParrotSuite(QMainWindow):
                     "sound": alarm.get("sound", "Default"),
                     "path": alarm.get("path", "")
                 }
-                self.config.setdefault("alarms", []).append(snoozed_alarm)
-                self._save_config()
+                self.temporary_alarms.append(snoozed_alarm)
 
                 # Refresh list
                 self.alarm_list.clear()
-                for a in self.config.get("alarms", []):
+                all_alarms = self.config.get("alarms", []) + self.temporary_alarms
+                for a in all_alarms:
                     self.alarm_list.addItem(f"{a['time']} - {a['label']} [{a['sound']}]")
             else:
                 self._stop_alarm()
