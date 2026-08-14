@@ -1,0 +1,7 @@
+customtkinter
+speechrecognition
+faster-whisper
+argostranslate
+pyttsx3
+numpy
+pyaudio
