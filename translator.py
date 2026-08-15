@@ -9,10 +9,12 @@ import argostranslate.package
 import argostranslate.translate
 import pyttsx3
 
-# Monkey patch ArgosTranslate to avoid Stanza errors on unsupported Tagalog
+# Monkey patch ArgosTranslate to avoid Stanza errors on unsupported Tagalog/Japanese
 import argostranslate.sbd
 if hasattr(argostranslate.sbd, 'StanzaSentencizer') and hasattr(argostranslate.sbd.StanzaSentencizer, 'LANGUAGE_CODE_MAPPING'):
     argostranslate.sbd.StanzaSentencizer.LANGUAGE_CODE_MAPPING['tl'] = 'en'
+    argostranslate.sbd.StanzaSentencizer.LANGUAGE_CODE_MAPPING['ja'] = 'en'
+
 
 
 ctk.set_appearance_mode("Dark")
@@ -39,7 +41,7 @@ class TranslatorApp(ctk.CTk):
         self.source_label = ctk.CTkLabel(self.controls_frame, text="Source Language:")
         self.source_label.grid(row=0, column=0, padx=10, pady=10)
         self.source_var = ctk.StringVar(value="Auto-Detect")
-        self.source_menu = ctk.CTkOptionMenu(self.controls_frame, variable=self.source_var, values=["Auto-Detect", "en", "tl"])
+        self.source_menu = ctk.CTkOptionMenu(self.controls_frame, variable=self.source_var, values=["Auto-Detect", "en", "tl", "ja"])
         self.source_menu.grid(row=0, column=1, padx=10, pady=10)
 
         self.target_label = ctk.CTkLabel(self.controls_frame, text="Target Language:")
@@ -53,6 +55,17 @@ class TranslatorApp(ctk.CTk):
 
         self.stop_btn = ctk.CTkButton(self.controls_frame, text="Stop Listening", command=self.stop_listening, fg_color="red", hover_color="darkred", state="disabled")
         self.stop_btn.grid(row=1, column=2, columnspan=2, padx=10, pady=10, sticky="ew")
+
+        # Chat actions
+        self.action_frame = ctk.CTkFrame(self)
+        self.action_frame.grid(row=4, column=0, pady=(0, 20), padx=20, sticky="ew")
+        self.action_frame.grid_columnconfigure((0, 1), weight=1)
+
+        self.copy_btn = ctk.CTkButton(self.action_frame, text="Copy Chat", command=self.copy_chat)
+        self.copy_btn.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
+
+        self.save_btn = ctk.CTkButton(self.action_frame, text="Save Chat", command=self.save_chat)
+        self.save_btn.grid(row=0, column=1, padx=10, pady=5, sticky="ew")
 
         # Diarization state
         self.speaker_count = 1
@@ -116,7 +129,7 @@ class TranslatorApp(ctk.CTk):
             available_packages = argostranslate.package.get_available_packages()
 
             # Install needed packages
-            needed = [('en','hi'), ('en','tl'), ('tl','en'), ('hi','en')]
+            needed = [('en','hi'), ('en','tl'), ('tl','en'), ('hi','en'), ('en','ja'), ('ja','en')]
             installed_packages = argostranslate.package.get_installed_packages()
             installed_codes = [(pkg.from_code, pkg.to_code) for pkg in installed_packages]
 
@@ -238,6 +251,21 @@ class TranslatorApp(ctk.CTk):
             self.history_text.see("end")
             self.history_text.configure(state="disabled")
         self.after(100, self.check_queue)
+
+    def copy_chat(self):
+        text = self.history_text.get("0.0", "end")
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.update_history("System", "Chat copied to clipboard.\n")
+
+    def save_chat(self):
+        text = self.history_text.get("0.0", "end")
+        try:
+            with open("conversation_log.txt", "w", encoding="utf-8") as f:
+                f.write(text)
+            self.update_history("System", "Chat saved to conversation_log.txt.\n")
+        except Exception as e:
+            self.update_history("System", f"Failed to save chat: {e}\n")
 
 if __name__ == "__main__":
     app = TranslatorApp()
