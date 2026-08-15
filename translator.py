@@ -9,6 +9,12 @@ import argostranslate.package
 import argostranslate.translate
 import pyttsx3
 
+# Monkey patch ArgosTranslate to avoid Stanza errors on unsupported Tagalog
+import argostranslate.sbd
+if hasattr(argostranslate.sbd, 'StanzaSentencizer') and hasattr(argostranslate.sbd.StanzaSentencizer, 'LANGUAGE_CODE_MAPPING'):
+    argostranslate.sbd.StanzaSentencizer.LANGUAGE_CODE_MAPPING['tl'] = 'en'
+
+
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
@@ -32,8 +38,8 @@ class TranslatorApp(ctk.CTk):
 
         self.source_label = ctk.CTkLabel(self.controls_frame, text="Source Language:")
         self.source_label.grid(row=0, column=0, padx=10, pady=10)
-        self.source_var = ctk.StringVar(value="en")
-        self.source_menu = ctk.CTkOptionMenu(self.controls_frame, variable=self.source_var, values=["en", "tl"])
+        self.source_var = ctk.StringVar(value="Auto-Detect")
+        self.source_menu = ctk.CTkOptionMenu(self.controls_frame, variable=self.source_var, values=["Auto-Detect", "en", "tl"])
         self.source_menu.grid(row=0, column=1, padx=10, pady=10)
 
         self.target_label = ctk.CTkLabel(self.controls_frame, text="Target Language:")
@@ -54,7 +60,14 @@ class TranslatorApp(ctk.CTk):
         self.last_speech_time = time.time()
 
         self.speaker_label = ctk.CTkLabel(self.controls_frame, text=f"Detected Speakers: {self.speaker_count}")
+
         self.speaker_label.grid(row=2, column=0, columnspan=4, pady=5)
+
+        # Intensity Bar
+        self.intensity_bar = ctk.CTkProgressBar(self.controls_frame)
+        self.intensity_bar.grid(row=3, column=0, columnspan=4, padx=10, pady=5, sticky="ew")
+        self.intensity_bar.set(0)
+
 
         # Conversation History
         self.history_text = ctk.CTkTextbox(self, font=("Arial", 16))
@@ -169,6 +182,12 @@ class TranslatorApp(ctk.CTk):
                     raw_data = audio.get_raw_data(convert_rate=16000, convert_width=2)
                     audio_data = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32) / 32768.0
 
+                    # Calculate intensity (RMS)
+                    rms = np.sqrt(np.mean(audio_data**2))
+                    # Normalize rms for progress bar (typically 0.0 to 0.1 for voice, scale it up)
+                    intensity_val = min(1.0, rms * 10)
+                    self.after(0, lambda v=intensity_val: self.intensity_bar.set(v))
+
                     segments, info = self.whisper_model.transcribe(audio_data, beam_size=5)
                     text = "".join([segment.text for segment in segments]).strip()
 
@@ -176,6 +195,9 @@ class TranslatorApp(ctk.CTk):
                         self.last_speech_time = time.time() # Update last speech time
                         src_lang = self.source_var.get()
                         tgt_lang = self.target_var.get()
+
+                        if src_lang == "Auto-Detect":
+                            src_lang = info.language
 
                         speaker_name = f"Speaker {self.current_speaker_id}"
 
