@@ -64,3 +64,29 @@ class SystemTools:
             return "\n".join(items) if items else "Directory is empty."
         except Exception as e:
             return f"Error listing directory: {e}"
+
+    def move_file(self, src: str, dest: str) -> str:
+        import shutil
+        try:
+            shutil.move(src, dest)
+            return f"Moved file from {src} to {dest}"
+        except Exception as e:
+            return f"Error moving file: {e}"
+
+    def edit_file(self, path: str, content: str) -> str:
+        try:
+            with open(path, "w") as f:
+                f.write(content)
+            return f"Edited file {path} successfully."
+        except Exception as e:
+            return f"Error editing file: {e}"
+
+    def search_files(self, pattern: str, directory: str = None) -> str:
+        import glob
+        target_dir = directory if directory else self.workspace_dir
+        try:
+            search_path = os.path.join(target_dir, f"**/{pattern}")
+            results = glob.glob(search_path, recursive=True)
+            return "\n".join(results) if results else "No files found matching pattern."
+        except Exception as e:
+            return f"Error searching files: {e}"

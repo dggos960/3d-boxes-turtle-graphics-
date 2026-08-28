@@ -1,7 +1,7 @@
 import sys
 import os
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import QObject, Signal, Slot, QTimer
+from PySide6.QtCore import QObject, Signal, Slot, QTimer, QThread
 
 from config import WORKSPACE_DIR
 from modules.stt_engine import STTEngineThread
@@ -13,6 +13,36 @@ from modules.memory import MemoryManager
 from modules.system_tools import SystemTools
 from modules.scraper import WebScraper
 from modules.ui_overlay import OverlayUI
+import queue
+
+class ScraperWorkerThread(QThread):
+    result_generated = Signal(str, str, str) # query, result, original_text
+
+    def __init__(self, scraper, parent=None):
+        super().__init__(parent)
+        self.scraper = scraper
+        self.running = True
+        self.queue = queue.Queue()
+
+    def enqueue(self, query: str, original_text: str):
+        self.queue.put((query, original_text))
+
+    def run(self):
+        while self.running:
+            try:
+                query, original_text = self.queue.get(timeout=0.5)
+                search_results = self.scraper.search(query)
+                self.result_generated.emit(query, search_results, original_text)
+                self.queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"[ScraperWorker Error] {e}")
+
+    def stop(self):
+        self.running = False
+        self.wait()
+
 
 class AssistantOrchestrator(QObject):
     """
@@ -35,7 +65,11 @@ class AssistantOrchestrator(QObject):
         self.wake_detector = WakeWordDetector()
         self.network_thread = NetworkCheckThread()
 
+        self.scraper_worker = ScraperWorkerThread(self.scraper)
+
         self._setup_connections()
+
+        self.scraper_worker.start()
 
         self.ui.update_status("Starting up...")
         self.stt_thread.start()
@@ -59,6 +93,9 @@ class AssistantOrchestrator(QObject):
 
         # Network Status
         self.network_thread.status_changed.connect(self.update_network_status)
+
+        # Scraper routing
+        self.scraper_worker.result_generated.connect(self.handle_search_result)
 
         # We need a slot to process text when awake, we can dynamically connect/disconnect or use state.
         self.is_awake = False
@@ -97,9 +134,8 @@ class AssistantOrchestrator(QObject):
         if intent == "SEARCH":
             # Very basic extraction for demo. In prod, use LLM to extract query.
             query = text.replace("search", "").strip()
-            search_results = self.scraper.search(query)
-            prompt = f"User asked: {text}\nSearch Results:\n{search_results}\nSynthesize a short answer."
-            self.router.route_query(prompt, "You are an assistant summarizing search results.")
+            self.scraper_worker.enqueue(query, text)
+            # Will be handled by handle_search_result slot
 
         elif intent == "SYS_CMD":
             # Needs LLM to formulate tool payload
@@ -111,6 +147,11 @@ class AssistantOrchestrator(QObject):
             self.router.route_query(text, f"You are a helpful desktop assistant. Recent context:\n{context}")
 
         self.is_awake = False # Wait for next wake word
+
+    @Slot(str, str, str)
+    def handle_search_result(self, query, search_results, original_text):
+        prompt = f"User asked: {original_text}\nSearch Results:\n{search_results}\nSynthesize a short answer."
+        self.router.route_query(prompt, "You are an assistant summarizing search results.")
 
     @Slot(str)
     def handle_llm_response(self, response):
@@ -131,10 +172,12 @@ class AssistantOrchestrator(QObject):
         self.tts_thread.stop()
         self.network_thread.quit()
         self.network_thread.wait()
+        self.scraper_worker.stop()
+        self.router.cleanup()
 
 
 if __name__ == "__main__":
-    app = QApplication(sys.path)
+    app = QApplication(sys.argv)
 
     # We must only show UI if we are in an environment that supports it,
     # but the instructions requested PySide6 code.

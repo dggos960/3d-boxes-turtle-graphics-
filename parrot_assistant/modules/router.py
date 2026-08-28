@@ -28,6 +28,49 @@ class NetworkCheckThread(QThread):
             self.status_changed.emit(self.is_online)
 
 
+import queue
+
+class LLMWorkerThread(QThread):
+    response_generated = Signal(str)
+
+    def __init__(self, router, parent=None):
+        super().__init__(parent)
+        self.router = router
+        self.running = True
+        self.queue = queue.Queue()
+
+    def enqueue(self, query: str, system_prompt: str):
+        self.queue.put((query, system_prompt))
+
+    def run(self):
+        while self.running:
+            try:
+                query, system_prompt = self.queue.get(timeout=0.5)
+
+                is_connected = self.router.check_connection()
+
+                if is_connected:
+                    print("[Router] Sending to Online LLM")
+                    response = self.router.llm_online.generate(query, system_prompt)
+                    if "encountered an error" in response:
+                        print("[Router] Online LLM failed, falling back to Offline LLM")
+                        response = self.router.llm_offline.generate(query, system_prompt)
+                else:
+                    print("[Router] Offline mode, sending to Local LLM")
+                    response = self.router.llm_offline.generate(query, system_prompt)
+
+                self.response_generated.emit(response)
+                self.queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"[LLMWorker Error] {e}")
+
+    def stop(self):
+        self.running = False
+        self.wait()
+
+
 class Router(QObject):
     """
     Dual-engine manager handling internet connection checks and seamless fallback.
@@ -41,8 +84,9 @@ class Router(QObject):
         self.llm_offline = LLMOffline()
         self.is_online = False
 
-        # We can periodically check, or check right before generating.
-        # For simplicity, we check before generating.
+        self.worker = LLMWorkerThread(self)
+        self.worker.response_generated.connect(self.response_generated.emit)
+        self.worker.start()
 
     def check_connection(self):
         try:
@@ -59,18 +103,8 @@ class Router(QObject):
 
     @Slot(str, str)
     def route_query(self, query: str, system_prompt: str = "You are a helpful AI assistant."):
-        """Routes the query based on current network status."""
-        is_connected = self.check_connection()
+        """Enqueues the query to be processed by the LLM worker thread."""
+        self.worker.enqueue(query, system_prompt)
 
-        if is_connected:
-            print("[Router] Sending to Online LLM")
-            response = self.llm_online.generate(query, system_prompt)
-            # If the online model fails and returns a specific error string, we might fallback here too
-            if "encountered an error" in response:
-                print("[Router] Online LLM failed, falling back to Offline LLM")
-                response = self.llm_offline.generate(query, system_prompt)
-        else:
-            print("[Router] Offline mode, sending to Local LLM")
-            response = self.llm_offline.generate(query, system_prompt)
-
-        self.response_generated.emit(response)
+    def cleanup(self):
+        self.worker.stop()
