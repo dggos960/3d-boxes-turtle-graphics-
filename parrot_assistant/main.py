@@ -12,8 +12,9 @@ from modules.router import Router, NetworkCheckThread
 from modules.memory import MemoryManager
 from modules.system_tools import SystemTools
 from modules.scraper import WebScraper
-from modules.ui_overlay import OverlayUI
+from modules.ui_overlay import HighTechDashboard
 import queue
+import psutil
 
 class ScraperWorkerThread(QThread):
     result_generated = Signal(str, str, str) # query, result, original_text
@@ -69,6 +70,11 @@ class AssistantOrchestrator(QObject):
 
         self._setup_connections()
 
+        # System Metrics Timer
+        self.metrics_timer = QTimer(self)
+        self.metrics_timer.timeout.connect(self.update_metrics)
+        self.metrics_timer.start(1000) # Update every 1 second
+
         self.scraper_worker.start()
 
         self.ui.update_status("Starting up...")
@@ -76,7 +82,16 @@ class AssistantOrchestrator(QObject):
         self.tts_thread.start()
         self.network_thread.start()
 
+    @Slot()
+    def update_metrics(self):
+        cpu = psutil.cpu_percent()
+        ram = psutil.virtual_memory().percent
+        self.ui.update_metrics(cpu, ram)
+
     def _setup_connections(self):
+        # UI Operations Logging
+        self.stt_thread.log_signal.connect(self.ui.log_operation)
+        self.tts_thread.log_signal.connect(self.ui.log_operation)
         # STT -> Wake Detector
         self.stt_thread.text_signal.connect(self.wake_detector.process_text)
 
@@ -163,6 +178,7 @@ class AssistantOrchestrator(QObject):
 
     @Slot(bool)
     def update_network_status(self, is_online):
+        self.ui.update_network(is_online)
         mode = "[Online]" if is_online else "[Offline]"
         if not self.is_awake:
              self.ui.update_status(f"Listening... {mode}")
@@ -179,11 +195,9 @@ class AssistantOrchestrator(QObject):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
-    # We must only show UI if we are in an environment that supports it,
-    # but the instructions requested PySide6 code.
-    # If running headless tests, we'd skip showing it.
+    # We must only show UI if we are in an environment that supports it.
     if "--help" not in sys.argv:
-        ui = OverlayUI()
+        ui = HighTechDashboard()
         ui.show()
         orchestrator = AssistantOrchestrator(ui)
 

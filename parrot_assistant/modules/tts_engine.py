@@ -16,14 +16,22 @@ class TTSEngineThread(QThread):
     intensity_signal = Signal(float)
     finished_signal = Signal()
 
+    log_signal = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.queue = queue.Queue()
         self.running = True
-        self.engine = pyttsx3.init()
-        self.engine.setProperty('rate', TTS_RATE)
-        self.engine.setProperty('volume', TTS_VOLUME)
         self._is_speaking = False
+        self.engine_initialized = False
+
+        try:
+            self.engine = pyttsx3.init()
+            self.engine.setProperty('rate', TTS_RATE)
+            self.engine.setProperty('volume', TTS_VOLUME)
+            self.engine_initialized = True
+        except Exception as e:
+            self.init_error = str(e)
 
     def speak(self, text):
         """Add text to the speech queue."""
@@ -48,6 +56,11 @@ class TTSEngineThread(QThread):
         self.intensity_signal.emit(0.0)
 
     def run(self):
+        if not self.engine_initialized:
+            self.log_signal.emit(f"TTS INIT ERROR: {self.init_error}. Please check espeak/audio dependencies.")
+            return
+
+        self.log_signal.emit("TTS Engine initialized.")
         while self.running:
             try:
                 # Wait for text to speak (timeout allows checking self.running)

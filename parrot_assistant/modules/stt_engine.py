@@ -19,22 +19,37 @@ class STTEngineThread(QThread):
     intensity_signal = Signal(float)
     text_signal = Signal(str)
 
+    # Add a signal for logging internal errors to the UI
+    log_signal = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.running = True
         self.recognizer = sr.Recognizer()
+        self.microphone_initialized = False
 
-        # Audio source using PyAudio directly for stream analysis,
-        # or via SpeechRecognition for easy buffering
-        self.microphone = sr.Microphone(sample_rate=AUDIO_RATE)
+        try:
+            # Audio source using PyAudio directly for stream analysis,
+            # or via SpeechRecognition for easy buffering
+            self.microphone = sr.Microphone(sample_rate=AUDIO_RATE)
 
-        # Initialize Whisper Model
-        self.model = WhisperModel(STT_MODEL_SIZE, device="cpu", compute_type="int8")
+            # Initialize Whisper Model
+            self.model = WhisperModel(STT_MODEL_SIZE, device="cpu", compute_type="int8")
 
-        with self.microphone as source:
-            self.recognizer.adjust_for_ambient_noise(source)
+            with self.microphone as source:
+                self.recognizer.adjust_for_ambient_noise(source)
+            self.microphone_initialized = True
+        except Exception as e:
+            # We catch it here but we can't emit yet because signals aren't connected during init.
+            # We will handle it in the run loop.
+            self.init_error = str(e)
 
     def run(self):
+        if not self.microphone_initialized:
+            self.log_signal.emit(f"STT INIT ERROR: {self.init_error}. Please check PyAudio/Microphone.")
+            return
+
+        self.log_signal.emit("STT Engine initialized and listening.")
         while self.running:
             try:
                 # Listen for speech. We use a short timeout to keep the loop responsive
