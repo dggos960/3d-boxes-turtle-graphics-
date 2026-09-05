@@ -249,8 +249,36 @@ Always verify your work (e.g. by reading the file you wrote or executing the cod
 
         if response_message.get("content"):
             emit("log", f"Agent reasoning: {response_message['content']}")
-
         tool_calls = response_message.get("tool_calls")
+
+        # Fallback: if the model replied with a JSON string in content instead of a proper tool call
+        if not tool_calls and response_message.get("content"):
+            content_str = response_message["content"].strip()
+
+            # Simple heuristic: grab the first { to the last }
+            first_brace = content_str.find('{')
+            last_brace = content_str.rfind('}')
+            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                potential_json = content_str[first_brace:last_brace+1]
+                try:
+                    import json
+                    parsed = json.loads(potential_json)
+                    if "name" in parsed and "arguments" in parsed:
+                        tool_calls = [{
+                            "function": {
+                                "name": parsed["name"],
+                                "arguments": parsed["arguments"]
+                            }
+                        }]
+                        # Mutate response_message for API continuity
+                        response_message["tool_calls"] = tool_calls
+                except (json.JSONDecodeError, ValueError, KeyError):
+                    pass
+
+
+
+
+
 
         if tool_calls:
             for tool_call in tool_calls:
