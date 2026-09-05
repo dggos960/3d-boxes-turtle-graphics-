@@ -255,25 +255,41 @@ Always verify your work (e.g. by reading the file you wrote or executing the cod
         if not tool_calls and response_message.get("content"):
             content_str = response_message["content"].strip()
 
-            # Simple heuristic: grab the first { to the last }
-            first_brace = content_str.find('{')
-            last_brace = content_str.rfind('}')
-            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-                potential_json = content_str[first_brace:last_brace+1]
+            # Simple heuristic: scan for balanced brackets to extract multiple JSON objects
+            extracted_jsons = []
+            brace_count = 0
+            start_idx = -1
+
+            for i, char in enumerate(content_str):
+                if char == '{':
+                    if brace_count == 0:
+                        start_idx = i
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0 and start_idx != -1:
+                        extracted_jsons.append(content_str[start_idx:i+1])
+                        start_idx = -1
+
+            parsed_calls = []
+            for potential_json in extracted_jsons:
                 try:
                     import json
                     parsed = json.loads(potential_json)
                     if "name" in parsed and "arguments" in parsed:
-                        tool_calls = [{
+                        parsed_calls.append({
                             "function": {
                                 "name": parsed["name"],
                                 "arguments": parsed["arguments"]
                             }
-                        }]
-                        # Mutate response_message for API continuity
-                        response_message["tool_calls"] = tool_calls
+                        })
                 except (json.JSONDecodeError, ValueError, KeyError):
                     pass
+
+            if parsed_calls:
+                tool_calls = parsed_calls
+                response_message["tool_calls"] = tool_calls
+
 
 
 
