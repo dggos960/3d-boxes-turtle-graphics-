@@ -59,11 +59,25 @@ Master Menu & External Scripts:
 - "Run script [script.sh]" -> Automatically launches the specified bash script in a new terminal window.
 - "Run command [command]" -> Executes the raw bash command silently in the background and reads back the first two lines of output.
 
+Advanced Features (Memory, Scheduling, Music, and Moods):
+- "Remember that [fact]" -> Saves a specific fact permanently into the SQLite database.
+- "Remind me to [task] in [X] minutes" -> Schedules a background reminder. Jarvis will automatically speak and interrupt you when the time is up.
+- "I feel [sad/happy/stressed]" -> Saves your current mood to the database.
+- "Play music" / "Play [song name]" -> Searches your Music and Downloads folders and plays the file via mpv in the background.
+- "Stop music" / "Next song" -> Controls the background music playback.
+
 Interruption (Barge-In):
 - At any time while Jarvis is speaking, you can press the [Enter] key on the keyboard to instantly silence him and cancel the current TTS playback.
 
 =========================================================
-3. SYSTEM ARCHITECTURE & PRIVACY
+3. PROACTIVE AUTONOMOUS THOUGHT PROCESS
 =========================================================
-- 100% Stateless: To ensure maximum security and privacy, this version of Jarvis is entirely stateless. He does not utilize an SQLite database, does not track facts, and does not record conversational history.
-- Local Processing: All audio is recorded, processed into text, analyzed by the LLM, and spoken back without ever leaving your machine. No cloud APIs are utilized.
+Jarvis runs a dedicated background "Proactive Agent" thread. This agent:
+- Constantly evaluates your reminders and speaks them out loud exactly when they are due.
+- Monitors your saved "Mood". If you tell Jarvis you are sad or stressed, the Proactive Agent will autonomously intervene (even if you haven't spoken) by playing relaxing background music to cheer you up. Furthermore, the LLM thought prompt dynamically adapts its tone based on your stored mood (e.g., being gentle and supportive when you are down).
+
+=========================================================
+4. SYSTEM ARCHITECTURE & PRIVACY
+=========================================================
+- 100% Offline: All audio is recorded, processed into text, analyzed by the LLM, and spoken back without ever leaving your machine. No cloud APIs are utilized.
+- Privacy-Respecting Database: Your chat history, reminders, and personal facts are stored entirely locally in an SQLite database file.

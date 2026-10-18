@@ -2,14 +2,13 @@ import os
 import sys
 import json
 import time
+import sqlite3
 import subprocess
 import threading
 import select
 import psutil
 import datetime
 import re
-import wave
-import io
 import glob
 import signal
 import shutil
@@ -21,8 +20,10 @@ from faster_whisper import WhisperModel
 PIPER_BIN = "bin/piper/piper"
 VOICE_ONNX = "voices/en_US-lessac-medium.onnx"
 OLLAMA_MODEL = "qwen2.5:1.5b"
+DB_PATH = "/media/dggos/New Volume/jarvis/python-code/offline-assistant/Enhanced-Voice/jarvis_advanced_memory.db"
 
 HOME_DIR = "/home/dggos"
+MUSIC_DIR = os.path.expanduser("~/Music")
 
 SAMPLE_RATE = 16000
 CHUNK_SIZE = 1024
@@ -55,7 +56,164 @@ def launch_in_terminal(command_str):
             return
     subprocess.Popen(["bash", "-c", command_str], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-# ================= 1. Master Menu Controller =================
+# ================= 1. Memory & Database =================
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS conversation (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            role TEXT,
+            content TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS facts (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            due_time TEXT,
+            status TEXT DEFAULT 'pending'
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def save_chat_turn(role, content):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute("INSERT INTO conversation (timestamp, role, content) VALUES (?, ?, ?)", (now_str, role, content))
+    conn.commit()
+    conn.close()
+
+def get_recent_chat(limit=4):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT role, content FROM conversation ORDER BY id DESC LIMIT ?", (limit,))
+    rows = cur.fetchall()
+    conn.close()
+    return [{"role": r[0], "content": r[1]} for r in reversed(rows)]
+
+def save_fact(key, value):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute("""
+        INSERT INTO facts (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=?
+    """, (key.strip().lower(), value.strip(), now_str, now_str))
+    conn.commit()
+    conn.close()
+
+def get_fact(key):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM facts WHERE key = ?", (key.strip().lower(),))
+    row = cur.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def get_all_facts():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT key, value FROM facts")
+    rows = cur.fetchall()
+    conn.close()
+    return {r[0]: r[1] for r in rows}
+
+def schedule_reminder(title, minutes):
+    due_time = datetime.datetime.now() + datetime.timedelta(minutes=minutes)
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO reminders (title, due_time, status) VALUES (?, ?, 'pending')",
+                (title, due_time.strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit()
+    conn.close()
+    return due_time
+
+def check_due_reminders():
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT id, title FROM reminders WHERE status='pending' AND due_time <= ?", (now_str,))
+    rows = cur.fetchall()
+    for row in rows:
+        cur.execute("UPDATE reminders SET status='completed' WHERE id=?", (row[0],))
+    conn.commit()
+    conn.close()
+    return [r[1] for r in rows]
+
+# ================= 2. Standalone Music Player =================
+class StandaloneMusicPlayer:
+    def __init__(self):
+        self.proc = None
+        self.playlist = []
+        self.current_index = 0
+
+    def scan_files(self):
+        search_dirs = [MUSIC_DIR, os.path.expanduser("~/Downloads"), os.getcwd()]
+        found = []
+        for d in search_dirs:
+            if os.path.exists(d):
+                for ext in ("*.mp3", "*.wav", "*.flac", "*.m4a", "*.ogg"):
+                    found.extend(glob.glob(os.path.join(d, ext)))
+                    found.extend(glob.glob(os.path.join(d, "**", ext), recursive=True))
+        return list(set(found))
+
+    def play(self, query=""):
+        self.stop()
+        self.playlist = self.scan_files()
+        if not self.playlist:
+            return "No audio tracks were found in your Music directory."
+
+        target_file = None
+        if query:
+            clean_q = query.lower().strip()
+            for f in self.playlist:
+                if clean_q in os.path.basename(f).lower():
+                    target_file = f
+                    break
+
+        if not target_file:
+            target_file = self.playlist[0]
+
+        self.current_index = self.playlist.index(target_file)
+        fname = os.path.basename(target_file)
+
+        self.proc = subprocess.Popen(
+            ["mpv", "--no-video", "--volume=40", target_file],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid
+        )
+        return f"Playing {fname}."
+
+    def next_track(self):
+        if not self.playlist:
+            return "Playlist is empty."
+        self.current_index = (self.current_index + 1) % len(self.playlist)
+        return self.play(os.path.basename(self.playlist[self.current_index]))
+
+    def stop(self):
+        if self.proc and self.proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+            except Exception:
+                pass
+            self.proc = None
+            return "Music stopped."
+        return "No music is currently playing."
+
+music_player = StandaloneMusicPlayer()
+
+# ================= 3. Master Menu Controller =================
 class MasterMenuController:
     def __init__(self):
         self.awaiting_choice = False
@@ -129,7 +287,7 @@ class MasterMenuController:
 
 master_ctl = MasterMenuController()
 
-# ================= 2. Tools & Actions =================
+# ================= 4. Tools & Actions =================
 def run_bash_command(command_str):
     clean_cmd = re.sub(r"^(run cmd|run command|execute command|cmd)\s+", "", command_str, flags=re.IGNORECASE).strip()
     if not clean_cmd:
@@ -180,6 +338,14 @@ def execute_system(text):
         return master_ctl.handle_choice(text)
     if any(k in t for k in ["run master file", "master file", "master script", "open master"]):
         return master_ctl.start()
+
+    if any(k in t for k in ["play music", "play song", "play track", "start music"]):
+        query = re.sub(r"(play music|play song|play track|start music|play)", "", t).strip()
+        return music_player.play(query)
+    if any(k in t for k in ["stop music", "pause music", "stop song", "turn off music"]):
+        return music_player.stop()
+    if any(k in t for k in ["next song", "next track", "skip song"]):
+        return music_player.next_track()
 
     if ".sh" in t or "run script" in t:
         match = re.search(r"([a-zA-Z0-9_\-\.\/]+\.sh)", t)
@@ -235,16 +401,18 @@ def execute_system(text):
     if "date" in t or "day" in t: return f"Today is {datetime.datetime.now().strftime('%A, %B %d, %Y')}."
     return None
 
-# ================= 3. Audio Player with Barge-In =================
+# ================= 5. Audio Player with Barge-In =================
 class AudioPlayer:
     def __init__(self):
         self.tts_proc = None
         self.piper_proc = None
         self.is_speaking = False
         self.interrupt_flag = threading.Event()
+        self.lock = threading.Lock()
 
     def stop_playback(self):
         self.interrupt_flag.set()
+        music_player.stop()
         if self.tts_proc and self.tts_proc.poll() is None:
             try:
                 self.tts_proc.kill()
@@ -262,42 +430,44 @@ class AudioPlayer:
     def speak(self, text, stream=None):
         if not text:
             return
-        self.is_speaking = True
-        self.interrupt_flag.clear()
-        cleaned = re.sub(r"[*_#`]", "", text)
-        print(f"\033[38;5;75m[Jarvis]: {cleaned}\033[0m")
-        try:
-            self.piper_proc = subprocess.Popen(
-                [PIPER_BIN, "--model", VOICE_ONNX, "--length_scale", "0.78", "--output_raw"],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-            )
-            self.tts_proc = subprocess.Popen(
-                ["aplay", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-q", "-"],
-                stdin=self.piper_proc.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            self.piper_proc.stdin.write(cleaned.encode("utf-8"))
-            self.piper_proc.stdin.close()
 
-            while self.tts_proc and self.tts_proc.poll() is None:
-                if self.interrupt_flag.is_set():
-                    self.stop_playback()
-                    break
-                time.sleep(0.02)
-        except Exception as e:
-            print(f"[Audio Error] {e}")
-        finally:
-            self.tts_proc = None
-            self.piper_proc = None
-            time.sleep(0.35)
-            if stream:
-                try:
-                    avail = stream.get_read_available()
-                    while avail > 0:
-                        stream.read(avail, exception_on_overflow=False)
+        with self.lock:
+            self.is_speaking = True
+            self.interrupt_flag.clear()
+            cleaned = re.sub(r"[*_#`]", "", text)
+            print(f"\n\033[38;5;75m[Jarvis]: {cleaned}\033[0m\n")
+            try:
+                self.piper_proc = subprocess.Popen(
+                    [PIPER_BIN, "--model", VOICE_ONNX, "--length_scale", "0.78", "--output_raw"],
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+                )
+                self.tts_proc = subprocess.Popen(
+                    ["aplay", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-q", "-"],
+                    stdin=self.piper_proc.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                self.piper_proc.stdin.write(cleaned.encode("utf-8"))
+                self.piper_proc.stdin.close()
+
+                while self.tts_proc and self.tts_proc.poll() is None:
+                    if self.interrupt_flag.is_set():
+                        self.stop_playback()
+                        break
+                    time.sleep(0.02)
+            except Exception as e:
+                print(f"[Audio Error] {e}")
+            finally:
+                self.tts_proc = None
+                self.piper_proc = None
+                time.sleep(0.35)
+                if stream:
+                    try:
                         avail = stream.get_read_available()
-                except Exception:
-                    pass
-            self.is_speaking = False
+                        while avail > 0:
+                            stream.read(avail, exception_on_overflow=False)
+                            avail = stream.get_read_available()
+                    except Exception:
+                        pass
+                self.is_speaking = False
 
 audio_out = AudioPlayer()
 
@@ -308,7 +478,7 @@ def keyboard_interrupt_listener():
             rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
             if rlist:
                 line = sys.stdin.readline()
-                if audio_out.is_speaking:
+                if audio_out.is_speaking or music_player.proc is not None:
                     audio_out.stop_playback()
                     print("\n\033[38;5;208m[Playback Interrupted via Keyboard]\033[0m")
         except Exception:
@@ -326,9 +496,45 @@ def play_chime(freq=820, duration=0.07):
         p.terminate()
     threading.Thread(target=_chime, daemon=True).start()
 
-# ================= 4. Core Voice Assistant =================
+# ================= 6. Proactive Agent (Autonomous Thought Process) =================
+def proactive_agent_thread(stream):
+    """Continuously monitors database for due reminders and evaluates user mood to act autonomously."""
+    while True:
+        time.sleep(10)
+
+        # 1. Check Reminders
+        due_reminders = check_due_reminders()
+        for reminder in due_reminders:
+            if not audio_out.is_speaking:
+                audio_out.speak(f"Sir, I have a reminder for you: {reminder}", stream)
+
+        # 2. Check Mood for Autonomous Action
+        user_mood = get_fact("user_mood")
+        last_action_time = get_fact("last_proactive_mood_action")
+
+        should_act = False
+        if user_mood in ["sad", "depressed", "down", "stressed", "anxious"]:
+            if not last_action_time:
+                should_act = True
+            else:
+                try:
+                    last_time = datetime.datetime.strptime(last_action_time, "%Y-%m-%d %H:%M:%S")
+                    if (datetime.datetime.now() - last_time).total_seconds() > 3600: # Wait at least 1 hour between unsolicited cheers
+                        should_act = True
+                except:
+                    should_act = True
+
+        if should_act and not audio_out.is_speaking:
+            save_fact("last_proactive_mood_action", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+            audio_out.speak("I noticed you've been feeling down. Let me play some music to help you relax.", stream)
+            music_player.play()
+
+
+# ================= 7. Core Voice Assistant =================
 class JarvisOpenMic:
     def __init__(self):
+        init_db()
         print("[Init] Loading faster-whisper neural model (tiny.en int8)...")
         self.stt = WhisperModel("tiny.en", device="cpu", compute_type="int8", cpu_threads=4)
         self.audio = pyaudio.PyAudio()
@@ -338,18 +544,26 @@ class JarvisOpenMic:
         self.last_interaction_time = 0.0
 
     def stream_ollama(self, prompt):
+        user_mood = get_fact("user_mood") or "neutral"
+        facts = get_all_facts()
+
+        fact_lines = "\n".join([f"- {k}: {v}" for k, v in facts.items() if k not in ["user_mood", "last_proactive_mood_action"]])
+        user_context = f"\nUser's Current Mood: {user_mood}\nKnown Facts:\n{fact_lines}"
+
         sys_prompt = {
             "role": "system",
-            "content": "You are Jarvis, a highly advanced, capable, and intelligent Linux workstation assistant. "
-                       "You are direct, exceptionally smart, and professional. Provide the best possible solution or answer directly. "
-                       "Keep responses concise and easy to understand when spoken (1-3 sentences maximum). "
-                       "Do not use markdown formatting, asterisks, or bullet points."
+            "content": (
+                "You are Jarvis, a highly advanced, capable, intelligent, and deeply empathetic Linux workstation assistant. "
+                "You possess your own thought process. Talk accordingly based on the User's Current Mood. If they are sad, be very supportive, gentle, and comforting. "
+                "If they are happy, be energetic. Provide direct, helpful answers. "
+                f"Keep responses concise and easy to understand when spoken (1-3 sentences). No markdown or asterisks.{user_context}"
+            )
         }
 
         payload = {
             "model": OLLAMA_MODEL,
-            "messages": [sys_prompt, {"role": "user", "content": prompt}],
-            "options": {"num_ctx": 2048, "temperature": 0.5},
+            "messages": [sys_prompt] + get_recent_chat(4) + [{"role": "user", "content": prompt}],
+            "options": {"num_ctx": 2048, "temperature": 0.6},
             "stream": True
         }
 
@@ -439,7 +653,10 @@ class JarvisOpenMic:
             input=True, frames_per_buffer=CHUNK_SIZE
         )
 
+        threading.Thread(target=proactive_agent_thread, args=(stream,), daemon=True).start()
+
         print("\n\033[38;5;48m>>> ADVANCED JARVIS CONVERSATIONAL OPEN-MIC ONLINE <<<")
+        print(">>> Advanced Memory, Mood Tracking, Scheduling, and Proactive Autonomous Thought Active <<<")
         print(">>> Wake Word: Say 'Jarvis', 'Hello', or 'Hey' to wake me up. <<<")
         print(f">>> Auto-Sleep: Goes to sleep after {CONVERSATION_TIMEOUT}s of silence. <<<")
         print(">>> Interruption Active: Press [Enter] anytime to cut speech <<<\033[0m\n")
@@ -498,20 +715,63 @@ class JarvisOpenMic:
 
     def process_query(self, text, stream):
         print(f"\n\033[38;5;35m[User]: {text}\033[0m")
+        save_chat_turn("user", text)
+
+        # Mood detection
+        mood_match = re.search(r"\bi (?:feel|am feeling|am) (sad|depressed|down|stressed|anxious|happy|excited|great|good|angry|mad|tired|exhausted)\b", text.lower())
+        if mood_match:
+            mood = mood_match.group(1)
+            save_fact("user_mood", mood)
+            if mood in ["sad", "depressed", "down", "stressed", "anxious"]:
+                save_fact("last_proactive_mood_action", "") # Reset proactive timer to allow immediate comforting behavior from the LLM prompt response
+
+        # Reminder scheduling
+        remind_match = re.search(r"remind me to (.*?) in (\d+|one|two|three|four|five|ten|fifteen|twenty|thirty|forty|fifty|sixty) (minute|minutes)", text.lower())
+        if remind_match:
+            task = remind_match.group(1).strip()
+            num_str = remind_match.group(2)
+            minutes = WORD_TO_NUM.get(num_str)
+            if minutes is None:
+                try:
+                    minutes = int(num_str)
+                except:
+                    minutes = 1
+            schedule_reminder(task, minutes)
+            ack = f"Got it. I will remind you to {task} in {minutes} minutes."
+            save_chat_turn("assistant", ack)
+            audio_out.speak(ack, stream)
+            return
+
+        # Facts memory
+        if "remember that" in text.lower():
+            fact = re.sub(r".*remember (that|this)\s*", "", text.lower()).strip()
+            if fact:
+                save_fact(f"fact_{int(time.time())}", fact)
+                ack = "Got it. I have committed that to memory."
+                save_chat_turn("assistant", ack)
+                audio_out.speak(ack, stream)
+                return
 
         quick_resp = execute_system(text)
         if quick_resp:
+            save_chat_turn("assistant", quick_resp)
             audio_out.speak(quick_resp, stream)
             return
 
+        full_reply = []
         for sentence in self.stream_ollama(text):
             if audio_out.interrupt_flag.is_set():
                 break
+            full_reply.append(sentence)
             audio_out.speak(sentence, stream)
+
+        if full_reply:
+            save_chat_turn("assistant", " ".join(full_reply))
 
 if __name__ == "__main__":
     try:
         JarvisOpenMic().run()
     except KeyboardInterrupt:
+        music_player.stop()
         audio_out.stop_playback()
         print("\nExiting Jarvis cleanly.")
