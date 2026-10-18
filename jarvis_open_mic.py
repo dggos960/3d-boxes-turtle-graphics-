@@ -26,10 +26,10 @@ HOME_DIR = "/home/dggos"
 MUSIC_DIR = os.path.expanduser("~/Music")
 
 SAMPLE_RATE = 16000
-CHUNK_SIZE = 1024
+CHUNK_SIZE = 512
 
-VOICE_TRIGGER = 0.54
-SILENCE_FLOOR = 0.42
+VOICE_TRIGGER = 0.48
+SILENCE_FLOOR = 0.38
 SILENCE_TIMEOUT = 0.55
 
 CONVERSATION_TIMEOUT = 45.0
@@ -536,7 +536,7 @@ class JarvisOpenMic:
     def __init__(self):
         init_db()
         print("[Init] Loading faster-whisper neural model (tiny.en int8)...")
-        self.stt = WhisperModel("tiny.en", device="cpu", compute_type="int8", cpu_threads=4)
+        self.stt = WhisperModel("base.en", device="cpu", compute_type="int8", cpu_threads=max(4, os.cpu_count() or 4))
         self.audio = pyaudio.PyAudio()
         threading.Thread(target=keyboard_interrupt_listener, daemon=True).start()
 
@@ -553,9 +553,9 @@ class JarvisOpenMic:
         sys_prompt = {
             "role": "system",
             "content": (
-                "You are Jarvis, a highly advanced, capable, intelligent, and deeply empathetic Linux workstation assistant. "
+                "You are Jarvis, a highly analytical, strictly factual, and deeply logical Linux architecture expert who solves problems concisely and correctly. "
                 "You possess your own thought process. Talk accordingly based on the User's Current Mood. If they are sad, be very supportive, gentle, and comforting. "
-                "If they are happy, be energetic. Provide direct, helpful answers. "
+                "Be precise, authoritative, and provide the most efficient terminal commands or solutions without hallucinating. "
                 f"Keep responses concise and easy to understand when spoken (1-3 sentences). No markdown or asterisks.{user_context}"
             )
         }
@@ -563,7 +563,7 @@ class JarvisOpenMic:
         payload = {
             "model": OLLAMA_MODEL,
             "messages": [sys_prompt] + get_recent_chat(4) + [{"role": "user", "content": prompt}],
-            "options": {"num_ctx": 2048, "temperature": 0.6},
+            "options": {"num_ctx": 2048, "temperature": 0.2},
             "stream": True
         }
 
@@ -671,7 +671,9 @@ class JarvisOpenMic:
                 beam_size=1,
                 best_of=1,
                 temperature=0.0,
-                condition_on_previous_text=False
+                condition_on_previous_text=False,
+                language="en",
+                vad_filter=True
             )
             raw_text = " ".join([seg.text for seg in segments]).strip().lower()
             if not raw_text:
