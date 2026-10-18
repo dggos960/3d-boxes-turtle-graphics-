@@ -1,0 +1,7 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Jarvis Prefix-Gated
+Comment=Jarvis Command Mode
+Exec=bash -c "cd '/media/dggos/New Volume/jarvis/python-code/offline-assistant/Enhanced-Voice' && source '/media/dggos/New Volume/jarvis/python-code/offline-assistant/venv/bin/activate' && python jarvis_workstation.py; exec bash"
+Terminal=true
