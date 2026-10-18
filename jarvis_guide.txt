@@ -1,0 +1,69 @@
+=========================================================
+      JARVIS - ADVANCED OFFLINE LINUX ASSISTANT
+=========================================================
+
+Overview
+--------
+Jarvis is a highly capable, completely offline, privacy-respecting voice assistant tailored specifically for Parrot OS / KDE Linux environments. It leverages localized AI models (faster-whisper, Ollama) and acts strictly as a stateless workstation automation tool.
+
+Core Components:
+- STT (Speech-to-Text): faster-whisper (tiny.en, INT8)
+- LLM (Brain): Ollama (qwen2.5:1.5b)
+- TTS (Text-to-Speech): Piper streaming to ALSA (aplay)
+- Voice Activity Detection: pyaudio
+
+=========================================================
+1. OPERATING MODES
+=========================================================
+
+Mode A: Command Mode (jarvis_workstation.py)
+--------------------------------------------
+- Purpose: Strict, single-shot execution mode.
+- Trigger: Every command MUST begin with a wake word (e.g., "Hi Jarvis", "Hey Jarvis", "Listen").
+- Benefit: Highly resistant to false activations in noisy environments. Background room conversation is ignored unless the prefix is spoken.
+
+Mode B: Open-Mic Mode (jarvis_open_mic.py)
+------------------------------------------
+- Purpose: Hands-free continuous conversation mode.
+- Trigger: Say "Jarvis" once to wake him up. After waking up, prefix words are no longer required; you can converse naturally.
+- Auto-Sleep: If no voice activity is detected for 45 seconds, Jarvis will automatically return to sleep mode to save CPU cycles.
+- Manual Sleep: You can manually command him by saying "go to sleep", "standby", or "sleep".
+
+=========================================================
+2. SUPPORTED VOICE COMMANDS
+=========================================================
+
+System Controls & Information:
+- "Check status", "System info", "Battery" -> Reads out CPU, RAM, and Battery percentages.
+- "What time is it?", "Time" -> Speaks the current time.
+- "What's the date?", "Day" -> Speaks the current day and date.
+
+Audio Controls:
+- "Volume up" / "Increase volume" -> Increases system volume by 10%.
+- "Volume down" / "Decrease volume" -> Decreases system volume by 10%.
+- "Volume max" / "Volume hundred" -> Sets volume to 100%.
+- "Volume half" / "Volume fifty" -> Sets volume to 50%.
+
+Display Controls:
+- "Brightness up" / "Increase screen" -> Increases screen brightness by 15%.
+- "Brightness down" / "Decrease screen" -> Decreases screen brightness by 15%.
+- "Screen lock on" / "Enable wake lock" -> Enables the screen wake-lock (prevents screen dimming).
+- "Screen lock off" / "Disable wake lock" -> Disables the screen wake-lock.
+
+File Inspection:
+- "List files in home" / "Show files" -> Reads aloud the first 8 files/directories in your home directory.
+- "Read file [filename]" -> Opens the specified file and reads the first 250 characters.
+
+Master Menu & External Scripts:
+- "Run master file" / "Open master" -> Opens an interactive vocal menu to launch specific workstation scripts (Chatbot, Alarm, Jupyter, Player, Shell, YT Downloader, CBT Exam).
+- "Run script [script.sh]" -> Automatically launches the specified bash script in a new terminal window.
+- "Run command [command]" -> Executes the raw bash command silently in the background and reads back the first two lines of output.
+
+Interruption (Barge-In):
+- At any time while Jarvis is speaking, you can press the [Enter] key on the keyboard to instantly silence him and cancel the current TTS playback.
+
+=========================================================
+3. SYSTEM ARCHITECTURE & PRIVACY
+=========================================================
+- 100% Stateless: To ensure maximum security and privacy, this version of Jarvis is entirely stateless. He does not utilize an SQLite database, does not track facts, and does not record conversational history.
+- Local Processing: All audio is recorded, processed into text, analyzed by the LLM, and spoken back without ever leaving your machine. No cloud APIs are utilized.
