@@ -26,10 +26,10 @@ HOME_DIR = "/home/dggos"
 MUSIC_DIR = os.path.expanduser("~/Music")
 
 SAMPLE_RATE = 16000
-CHUNK_SIZE = 512
+CHUNK_SIZE = 1024
 
-VOICE_TRIGGER = 0.05
-SILENCE_FLOOR = 0.02
+VOICE_TRIGGER = 0.54
+SILENCE_FLOOR = 0.42
 SILENCE_TIMEOUT = 0.55
 
 CONVERSATION_TIMEOUT = 45.0
@@ -536,7 +536,7 @@ class JarvisOpenMic:
     def __init__(self):
         init_db()
         print("[Init] Loading faster-whisper neural model (tiny.en int8)...")
-        self.stt = WhisperModel("base.en", device="cpu", compute_type="int8", cpu_threads=max(4, os.cpu_count() or 4))
+        self.stt = WhisperModel("tiny.en", device="cpu", compute_type="int8", cpu_threads=4)
         self.audio = pyaudio.PyAudio()
         threading.Thread(target=keyboard_interrupt_listener, daemon=True).start()
 
@@ -611,7 +611,7 @@ class JarvisOpenMic:
                 continue
 
             pcm = np.frombuffer(data, dtype=np.int16)
-            energy = float(np.sqrt(np.mean(pcm.astype(np.float32)**2))) / 32768.0
+            energy = float(np.max(np.abs(pcm))) / 32768.0
 
             if energy > VOICE_TRIGGER:
                 if not has_spoken:
@@ -672,8 +672,6 @@ class JarvisOpenMic:
                 best_of=1,
                 temperature=0.0,
                 condition_on_previous_text=False,
-                language="en",
-                vad_filter=True
             )
             raw_text = " ".join([seg.text for seg in segments]).strip().lower()
             if not raw_text:
