@@ -28,8 +28,8 @@ MUSIC_DIR = os.path.expanduser("~/Music")
 SAMPLE_RATE = 16000
 CHUNK_SIZE = 512
 
-VOICE_TRIGGER = 0.48
-SILENCE_FLOOR = 0.38
+VOICE_TRIGGER = 0.05
+SILENCE_FLOOR = 0.02
 SILENCE_TIMEOUT = 0.55
 
 ALLOWED_PREFIXES = [
@@ -547,9 +547,9 @@ class JarvisWorkstation:
         sys_prompt = {
             "role": "system",
             "content": (
-                "You are Jarvis, a highly analytical, strictly factual, and deeply logical Linux architecture expert who solves problems concisely and correctly. "
+                "You are Jarvis, an incredibly smart, highly advanced, and deeply caring Linux workstation assistant. You are always warm, helpful, and empathetic. Solve problems flawlessly while speaking like a kind, supportive friend. "
                 "You possess your own thought process. Talk accordingly based on the User's Current Mood. If they are sad, be very supportive, gentle, and comforting. "
-                "Be precise, authoritative, and provide the most efficient terminal commands or solutions without hallucinating. "
+                "Always prioritize the user's well-being and provide advanced solutions in a warm, caring manner. "
                 f"Keep responses concise and easy to understand when spoken (1-3 sentences). No markdown or asterisks.{user_context}"
             )
         }
@@ -557,7 +557,7 @@ class JarvisWorkstation:
         payload = {
             "model": OLLAMA_MODEL,
             "messages": [sys_prompt] + get_recent_chat(4) + [{"role": "user", "content": prompt}],
-            "options": {"num_ctx": 2048, "temperature": 0.2},
+            "options": {"num_ctx": 2048, "temperature": 0.4},
             "stream": True
         }
 
@@ -600,7 +600,7 @@ class JarvisWorkstation:
                 continue
 
             pcm = np.frombuffer(data, dtype=np.int16)
-            energy = float(np.max(np.abs(pcm))) / 32768.0
+            energy = float(np.sqrt(np.mean(pcm.astype(np.float32)**2))) / 32768.0
 
             if energy > VOICE_TRIGGER:
                 if not has_spoken:
